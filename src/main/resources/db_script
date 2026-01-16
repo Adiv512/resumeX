@@ -1,0 +1,452 @@
+-- ============================================================================
+-- RESUME BUILDER - COMPLETE DATABASE SCHEMA
+-- PostgreSQL Script with All Tables, Relations, Constraints & Indexes
+-- ============================================================================
+
+-- Drop existing tables (in reverse order of dependencies)
+DROP TABLE IF EXISTS resume_versions CASCADE;
+DROP TABLE IF EXISTS resume_exports CASCADE;
+DROP TABLE IF EXISTS resume_sections CASCADE;
+DROP TABLE IF EXISTS resumes CASCADE;
+DROP TABLE IF EXISTS templates CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+
+-- ============================================================================
+-- 1. USERS TABLE
+-- ============================================================================
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    role VARCHAR(20) NOT NULL CHECK (role IN ('USER', 'ADMIN')),
+    is_active BOOLEAN DEFAULT TRUE,
+    email_verified BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for users
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_role ON users(role);
+CREATE INDEX idx_users_created_at ON users(created_at);
+
+-- ============================================================================
+-- 2. TEMPLATES TABLE
+-- ============================================================================
+CREATE TABLE templates (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    html_content TEXT NOT NULL,
+    css_styles TEXT,
+    thumbnail_url VARCHAR(500),
+    is_active BOOLEAN DEFAULT TRUE,
+    category VARCHAR(50) CHECK (category IN ('ATS_FRIENDLY', 'MODERN', 'CLASSIC', 'CREATIVE', 'ACADEMIC')),
+    popularity_count INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for templates
+CREATE INDEX idx_templates_active ON templates(is_active);
+CREATE INDEX idx_templates_category ON templates(category);
+CREATE INDEX idx_templates_popularity ON templates(popularity_count DESC);
+
+-- ============================================================================
+-- 3. RESUMES TABLE
+-- ============================================================================
+CREATE TABLE resumes (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    template_id BIGINT,
+    title VARCHAR(200) NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+
+    -- Customization settings stored as JSON
+    font_family VARCHAR(100) DEFAULT 'Arial',
+    font_size INT DEFAULT 12,
+    color_scheme VARCHAR(50) DEFAULT 'default',
+    line_spacing DECIMAL(3,1) DEFAULT 1.5,
+    margin_top INT DEFAULT 20,
+    margin_bottom INT DEFAULT 20,
+    margin_left INT DEFAULT 20,
+    margin_right INT DEFAULT 20,
+
+    -- Metadata
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign Keys
+    CONSTRAINT fk_resume_user FOREIGN KEY (user_id)
+        REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_resume_template FOREIGN KEY (template_id)
+        REFERENCES templates(id) ON DELETE SET NULL
+);
+
+-- Indexes for resumes
+CREATE INDEX idx_resumes_user_id ON resumes(user_id);
+CREATE INDEX idx_resumes_template_id ON resumes(template_id);
+CREATE INDEX idx_resumes_is_active ON resumes(is_active);
+CREATE INDEX idx_resumes_created_at ON resumes(created_at DESC);
+CREATE INDEX idx_resumes_user_created ON resumes(user_id, created_at DESC);
+
+-- ============================================================================
+-- 4. RESUME_SECTIONS TABLE
+-- ============================================================================
+CREATE TABLE resume_sections (
+    id BIGSERIAL PRIMARY KEY,
+    resume_id BIGINT NOT NULL,
+    section_type VARCHAR(50) NOT NULL CHECK (section_type IN (
+        'PERSONAL_INFO',
+        'SUMMARY',
+        'EXPERIENCE',
+        'EDUCATION',
+        'SKILLS',
+        'PROJECTS',
+        'CERTIFICATIONS',
+        'LANGUAGES',
+        'ACHIEVEMENTS',
+        'CUSTOM'
+    )),
+    display_order INT NOT NULL DEFAULT 0,
+    is_visible BOOLEAN DEFAULT TRUE,
+
+    -- Content stored as JSONB for flexibility and query performance
+    content JSONB NOT NULL,
+
+    -- Metadata
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign Key
+    CONSTRAINT fk_section_resume FOREIGN KEY (resume_id)
+        REFERENCES resumes(id) ON DELETE CASCADE,
+
+    -- Unique constraint: one section type per resume (except CUSTOM)
+    CONSTRAINT unique_section_per_resume
+        UNIQUE (resume_id, section_type)
+);
+
+-- Indexes for resume_sections
+CREATE INDEX idx_sections_resume_id ON resume_sections(resume_id);
+CREATE INDEX idx_sections_type ON resume_sections(section_type);
+CREATE INDEX idx_sections_order ON resume_sections(resume_id, display_order);
+CREATE INDEX idx_sections_visible ON resume_sections(is_visible);
+
+-- GIN index for JSONB content searching
+CREATE INDEX idx_sections_content ON resume_sections USING GIN(content);
+
+-- ============================================================================
+-- 5. RESUME_EXPORTS TABLE
+-- ============================================================================
+CREATE TABLE resume_exports (
+    id BIGSERIAL PRIMARY KEY,
+    resume_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    file_path VARCHAR(500),
+    file_name VARCHAR(255),
+    export_format VARCHAR(20) DEFAULT 'PDF' CHECK (export_format IN ('PDF', 'DOCX')),
+    file_size_kb INT,
+    exported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign Keys
+    CONSTRAINT fk_export_resume FOREIGN KEY (resume_id)
+        REFERENCES resumes(id) ON DELETE CASCADE,
+    CONSTRAINT fk_export_user FOREIGN KEY (user_id)
+        REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Indexes for resume_exports
+CREATE INDEX idx_exports_resume_id ON resume_exports(resume_id);
+CREATE INDEX idx_exports_user_id ON resume_exports(user_id);
+CREATE INDEX idx_exports_date ON resume_exports(exported_at DESC);
+CREATE INDEX idx_exports_format ON resume_exports(export_format);
+
+-- ============================================================================
+-- 6. RESUME_VERSIONS TABLE (Version History)
+-- ============================================================================
+CREATE TABLE resume_versions (
+    id BIGSERIAL PRIMARY KEY,
+    resume_id BIGINT NOT NULL,
+    version_number INT NOT NULL,
+    version_name VARCHAR(100),
+
+    -- Complete snapshot stored as JSONB
+    snapshot JSONB NOT NULL,
+
+    -- Change metadata
+    change_description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign Key
+    CONSTRAINT fk_version_resume FOREIGN KEY (resume_id)
+        REFERENCES resumes(id) ON DELETE CASCADE,
+
+    -- Unique version number per resume
+    CONSTRAINT unique_version_number
+        UNIQUE (resume_id, version_number)
+);
+
+-- Indexes for resume_versions
+CREATE INDEX idx_versions_resume_id ON resume_versions(resume_id);
+CREATE INDEX idx_versions_created_at ON resume_versions(created_at DESC);
+CREATE INDEX idx_versions_number ON resume_versions(resume_id, version_number DESC);
+
+-- ============================================================================
+-- TRIGGERS FOR AUTOMATIC TIMESTAMP UPDATES
+-- ============================================================================
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply trigger to users
+CREATE TRIGGER update_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply trigger to templates
+CREATE TRIGGER update_templates_updated_at
+    BEFORE UPDATE ON templates
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply trigger to resumes
+CREATE TRIGGER update_resumes_updated_at
+    BEFORE UPDATE ON resumes
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply trigger to resume_sections
+CREATE TRIGGER update_sections_updated_at
+    BEFORE UPDATE ON resume_sections
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================================
+-- SAMPLE DATA FOR TEMPLATES (Professional ATS Templates)
+-- ============================================================================
+
+INSERT INTO templates (name, description, html_content, css_styles, category, is_active) VALUES
+(
+    'Classic ATS',
+    'Clean and professional ATS-friendly template with traditional layout',
+    '<html><!-- Template HTML here --></html>',
+    '/* CSS styles here */',
+    'ATS_FRIENDLY',
+    TRUE
+),
+(
+    'Modern Professional',
+    'Modern design with subtle colors and clean sections',
+    '<html><!-- Template HTML here --></html>',
+    '/* CSS styles here */',
+    'MODERN',
+    TRUE
+),
+(
+    'Minimalist',
+    'Ultra-clean minimalist design focusing on content',
+    '<html><!-- Template HTML here --></html>',
+    '/* CSS styles here */',
+    'ATS_FRIENDLY',
+    TRUE
+),
+(
+    'Creative Designer',
+    'Creative template with icons and visual elements',
+    '<html><!-- Template HTML here --></html>',
+    '/* CSS styles here */',
+    'CREATIVE',
+    TRUE
+),
+(
+    'Academic CV',
+    'Traditional academic CV format with detailed sections',
+    '<html><!-- Template HTML here --></html>',
+    '/* CSS styles here */',
+    'ACADEMIC',
+    TRUE
+);
+
+-- ============================================================================
+-- SAMPLE ADMIN USER (Password: Admin@123 - BCrypt hashed)
+-- ============================================================================
+
+INSERT INTO users (email, password, first_name, last_name, role, email_verified) VALUES
+(
+    'admin@resumebuilder.com',
+    '$2a$10$rO5HhYd5qKMKKCx/QUEqkOJFVVxGLXVnYKxqxCmMqPzKqJQGQNZZm',
+    'System',
+    'Admin',
+    'ADMIN',
+    TRUE
+);
+
+-- ============================================================================
+-- USEFUL VIEWS FOR ANALYTICS
+-- ============================================================================
+
+-- View: User Resume Statistics
+CREATE OR REPLACE VIEW user_resume_stats AS
+SELECT
+    u.id AS user_id,
+    u.email,
+    u.first_name,
+    u.last_name,
+    COUNT(DISTINCT r.id) AS total_resumes,
+    COUNT(DISTINCT CASE WHEN r.is_active THEN r.id END) AS active_resumes,
+    COUNT(DISTINCT e.id) AS total_exports,
+    MAX(r.created_at) AS last_resume_created,
+    MAX(e.exported_at) AS last_export_date
+FROM users u
+LEFT JOIN resumes r ON u.id = r.user_id
+LEFT JOIN resume_exports e ON u.id = e.user_id
+GROUP BY u.id, u.email, u.first_name, u.last_name;
+
+-- View: Template Usage Statistics
+CREATE OR REPLACE VIEW template_usage_stats AS
+SELECT
+    t.id AS template_id,
+    t.name AS template_name,
+    t.category,
+    COUNT(DISTINCT r.id) AS times_used,
+    COUNT(DISTINCT r.user_id) AS unique_users,
+    MAX(r.created_at) AS last_used_date
+FROM templates t
+LEFT JOIN resumes r ON t.id = r.template_id
+GROUP BY t.id, t.name, t.category
+ORDER BY times_used DESC;
+
+-- View: Daily Export Statistics
+CREATE OR REPLACE VIEW daily_export_stats AS
+SELECT
+    DATE(exported_at) AS export_date,
+    COUNT(*) AS total_exports,
+    COUNT(DISTINCT user_id) AS unique_users,
+    COUNT(DISTINCT resume_id) AS unique_resumes,
+    SUM(file_size_kb) AS total_size_kb
+FROM resume_exports
+GROUP BY DATE(exported_at)
+ORDER BY export_date DESC;
+
+-- ============================================================================
+-- FUNCTIONS FOR BUSINESS LOGIC
+-- ============================================================================
+
+-- Function: Get Resume Completion Percentage
+CREATE OR REPLACE FUNCTION get_resume_completion(resume_id_param BIGINT)
+RETURNS INTEGER AS $$
+DECLARE
+    total_sections INTEGER;
+    required_sections TEXT[] := ARRAY['PERSONAL_INFO', 'SUMMARY', 'EXPERIENCE', 'EDUCATION', 'SKILLS'];
+    completed_sections INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO completed_sections
+    FROM resume_sections
+    WHERE resume_id = resume_id_param
+    AND section_type = ANY(required_sections)
+    AND is_visible = TRUE;
+
+    RETURN (completed_sections * 100) / array_length(required_sections, 1);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function: Auto-increment Template Popularity
+CREATE OR REPLACE FUNCTION increment_template_popularity()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE templates
+    SET popularity_count = popularity_count + 1
+    WHERE id = NEW.template_id;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to auto-increment template popularity
+CREATE TRIGGER trigger_template_popularity
+    AFTER INSERT ON resumes
+    FOR EACH ROW
+    WHEN (NEW.template_id IS NOT NULL)
+    EXECUTE FUNCTION increment_template_popularity();
+
+-- ============================================================================
+-- CONSTRAINTS SUMMARY
+-- ============================================================================
+/*
+PRIMARY KEYS:
+- All tables have BIGSERIAL auto-increment primary keys
+
+FOREIGN KEYS:
+- resumes.user_id → users.id (CASCADE DELETE)
+- resumes.template_id → templates.id (SET NULL on delete)
+- resume_sections.resume_id → resumes.id (CASCADE DELETE)
+- resume_exports.resume_id → resumes.id (CASCADE DELETE)
+- resume_exports.user_id → users.id (CASCADE DELETE)
+- resume_versions.resume_id → resumes.id (CASCADE DELETE)
+
+UNIQUE CONSTRAINTS:
+- users.email
+- templates.name
+- resume_sections(resume_id, section_type)
+- resume_versions(resume_id, version_number)
+
+CHECK CONSTRAINTS:
+- users.role IN ('USER', 'ADMIN')
+- templates.category IN ('ATS_FRIENDLY', 'MODERN', 'CLASSIC', 'CREATIVE', 'ACADEMIC')
+- resume_sections.section_type (10 valid types)
+- resume_exports.export_format IN ('PDF', 'DOCX')
+
+INDEXES:
+- Email searches
+- User lookups
+- Resume queries by user/date
+- Section type filtering
+- JSONB content searching (GIN index)
+- Export analytics
+*/
+
+-- ============================================================================
+-- VERIFICATION QUERIES
+-- ============================================================================
+
+-- Check all tables created
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+ORDER BY table_name;
+
+-- Check all foreign keys
+SELECT
+    tc.table_name,
+    kcu.column_name,
+    ccu.table_name AS foreign_table_name,
+    ccu.column_name AS foreign_column_name
+FROM information_schema.table_constraints AS tc
+JOIN information_schema.key_column_usage AS kcu
+    ON tc.constraint_name = kcu.constraint_name
+JOIN information_schema.constraint_column_usage AS ccu
+    ON ccu.constraint_name = tc.constraint_name
+WHERE tc.constraint_type = 'FOREIGN KEY'
+ORDER BY tc.table_name;
+
+-- Check all indexes
+SELECT
+    tablename,
+    indexname,
+    indexdef
+FROM pg_indexes
+WHERE schemaname = 'public'
+ORDER BY tablename, indexname;
+
+-- ============================================================================
+-- END OF SCHEMA
+-- ============================================================================
