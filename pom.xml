@@ -70,6 +70,13 @@
 			<optional>true</optional>
 		</dependency>
 
+		<!-- JSONB Support for PostgreSQL -->
+		<dependency>
+			<groupId>io.hypersistence</groupId>
+			<artifactId>hypersistence-utils-hibernate-63</artifactId>
+			<version>3.7.0</version>
+		</dependency>
+
 		<!-- Test -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
